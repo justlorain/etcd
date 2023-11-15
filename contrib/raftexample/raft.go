@@ -43,11 +43,24 @@ type commit struct {
 }
 
 // A key-value stream backed by raft
+//
+// 表示 Raft 集群中的一个节点，由业务应用层设计的一个组合结构，包含了：
+// - Raft 核心数据结构 Node (raft.Node)
+// - Raft 日志条目内存存储模块 (raft.MemoryStorage）
+// - WAL 持久化模块 (wal.WAL)
+// - 网络模块 (rafthttp.Transport)
+//
+// 同时，它提供了三个核心的管道与业务逻辑模块、存储状态机交互：
+// - proposeC，它用来接收 client 发送的写请求提案消息；
+// - confChangeC，它用来接收集群配置变化消息；
+// - commitC，它用来输出 Raft 共识模块已提交的日志条目消息。
 type raftNode struct {
+	// read-only channel
 	proposeC    <-chan string            // proposed messages (k,v)
 	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
-	commitC     chan<- *commit           // entries committed to log (k,v)
-	errorC      chan<- error             // errors from raft session
+	// write-only channel
+	commitC chan<- *commit // entries committed to log (k,v)
+	errorC  chan<- error   // errors from raft session
 
 	id          int      // client ID for raft session
 	peers       []string // raft peer URLs
@@ -90,9 +103,12 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 	commitC := make(chan *commit)
 	errorC := make(chan error)
 
+	// raft configuration
 	rc := &raftNode{
+		// 在 main.go 中创建
 		proposeC:    proposeC,
 		confChangeC: confChangeC,
+		// 这里创建后返回
 		commitC:     commitC,
 		errorC:      errorC,
 		id:          id,
@@ -108,6 +124,7 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 
 		logger: zap.NewExample(),
 
+		// snap.Snapshotter 为 etcd 内置 struct
 		snapshotterReady: make(chan *snap.Snapshotter, 1),
 		// rest of structure populated after WAL replay
 	}
@@ -273,6 +290,7 @@ func (rc *raftNode) writeError(err error) {
 
 func (rc *raftNode) startRaft() {
 	if !fileutil.Exist(rc.snapdir) {
+		// 创建保存快照的文件夹
 		if err := os.Mkdir(rc.snapdir, 0750); err != nil {
 			log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
 		}
@@ -286,16 +304,27 @@ func (rc *raftNode) startRaft() {
 	rc.snapshotterReady <- rc.snapshotter
 
 	rpeers := make([]raft.Peer, len(rc.peers))
+	// raftexample --id 1 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 12380
+	// raftexample --id 2 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 22380
+	// raftexample --id 3 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 32380
 	for i := range rpeers {
+		// 为集群中的每个 node (包括自己）创建一个 raft.Peer 对象，ID 从 1 开始递增
 		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
 	}
+	// 创建 Raft 库核心配置
 	c := &raft.Config{
-		ID:                        uint64(rc.id),
-		ElectionTick:              10,
-		HeartbeatTick:             1,
-		Storage:                   rc.raftStorage,
-		MaxSizePerMsg:             1024 * 1024,
-		MaxInflightMsgs:           256,
+		// 当前 node 的 ID，与 raft.Peer 的 ID 相对应
+		ID: uint64(rc.id),
+		// 10 次 tick 函数的调用后还没有收到来自 leader 的 RPC 就变为 candidate 开始选举
+		ElectionTick: 10,
+		// 一次 Raft 心跳间隔调用几次 tick 函数
+		HeartbeatTick: 1,
+		// TODO: Raft 日志和状态持久化存储?
+		// TODO: bbolt 在哪初始化的，怎么和 Raft 结合使用，是否用作 Raft 模块的持久化存储（状态机存储）
+		Storage:         rc.raftStorage,
+		MaxSizePerMsg:   1024 * 1024,
+		MaxInflightMsgs: 256,
+		// 1 << 30 == 2 ^ 30
 		MaxUncommittedEntriesSize: 1 << 30,
 	}
 
@@ -426,6 +455,7 @@ func (rc *raftNode) serveChannels() {
 				if !ok {
 					rc.proposeC = nil
 				} else {
+					// 监听 rc.proposeC，如果 server 需要提交提案则将提案内容给 raft 模块处理
 					// blocks until accepted by raft state machine
 					rc.node.Propose(context.TODO(), []byte(prop))
 				}

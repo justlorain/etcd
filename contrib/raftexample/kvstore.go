@@ -27,9 +27,12 @@ import (
 )
 
 // a key-value store backed by raft
+// raftexample 存储数据的 struct，业务逻辑核心 struct
 type kvstore struct {
-	proposeC    chan<- string // channel for proposing updates
-	mu          sync.RWMutex
+	// write-only channel
+	proposeC chan<- string // channel for proposing updates
+	mu       sync.RWMutex
+	// 存储状态机，最终所有的 KV 都提交到这里，也从这里获取
 	kvStore     map[string]string // current committed key-value pairs
 	snapshotter *snap.Snapshotter
 }
@@ -47,11 +50,13 @@ func newKVStore(snapshotter *snap.Snapshotter, proposeC chan<- string, commitC <
 	}
 	if snapshot != nil {
 		log.Printf("loading snapshot at term %d and index %d", snapshot.Metadata.Term, snapshot.Metadata.Index)
+		// 从快照恢复 raft log 状态
 		if err := s.recoverFromSnapshot(snapshot.Data); err != nil {
 			log.Panic(err)
 		}
 	}
 	// read commits from raft into kvStore map until error
+	// 将来自 raft 模块已经提交的日志条目应用到状态机 (kvstore.map)
 	go s.readCommits(commitC, errorC)
 	return s
 }
@@ -68,10 +73,12 @@ func (s *kvstore) Propose(k string, v string) {
 	if err := gob.NewEncoder(&buf).Encode(kv{k, v}); err != nil {
 		log.Fatal(err)
 	}
+	// 提交提案到 proposeC, 注意这个 proposeC 在 Raft 模块和 kvstore 模块是同一个, 一个只读，一个只写
 	s.proposeC <- buf.String()
 }
 
 func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
+	// read-only channel
 	for commit := range commitC {
 		if commit == nil {
 			// signaled to load snapshot
@@ -91,6 +98,7 @@ func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 		for _, data := range commit.data {
 			var dataKv kv
 			dec := gob.NewDecoder(bytes.NewBufferString(data))
+			// 将 data 解码到 dataKv 中
 			if err := dec.Decode(&dataKv); err != nil {
 				log.Fatalf("raftexample: could not decode message (%v)", err)
 			}
