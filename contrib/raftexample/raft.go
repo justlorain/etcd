@@ -42,6 +42,9 @@ type commit struct {
 	applyDoneC chan<- struct{}
 }
 
+// raftNode 实现了 rafthttp.Raft 的全部方法
+var _ rafthttp.Raft = (*raftNode)(nil)
+
 // A key-value stream backed by raft
 //
 // 表示 Raft 集群中的一个节点，由业务应用层设计的一个组合结构，包含了：
@@ -74,6 +77,7 @@ type raftNode struct {
 	appliedIndex  uint64
 
 	// raft backing for the commit/error channel
+	// TODO: 查看所有的 usage
 	node        raft.Node
 	raftStorage *raft.MemoryStorage
 	wal         *wal.WAL
@@ -270,6 +274,7 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 	}
 	rc.raftStorage = raft.NewMemoryStorage()
 	if snapshot != nil {
+		// 应用快照到存储
 		rc.raftStorage.ApplySnapshot(*snapshot)
 	}
 	rc.raftStorage.SetHardState(st)
@@ -298,6 +303,8 @@ func (rc *raftNode) startRaft() {
 	rc.snapshotter = snap.New(zap.NewExample(), rc.snapdir)
 
 	oldwal := wal.Exist(rc.waldir)
+	// 初始化 raftNode.raftStorage
+	// 加载 WAL 快照并将 WAL 应用到 Raft log 的存储（raft.MemoryStorage）
 	rc.wal = rc.replayWAL()
 
 	// signal replay has finished
@@ -319,8 +326,7 @@ func (rc *raftNode) startRaft() {
 		ElectionTick: 10,
 		// 一次 Raft 心跳间隔调用几次 tick 函数
 		HeartbeatTick: 1,
-		// TODO: Raft 日志和状态持久化存储?
-		// TODO: bbolt 在哪初始化的，怎么和 Raft 结合使用，是否用作 Raft 模块的持久化存储（状态机存储）
+		// Raft log 的存储，默认使用 raft.MemoryStorage 非持久化存储，但和 WAL 一起使用可以保证持久化以及 recover after reboot
 		Storage:         rc.raftStorage,
 		MaxSizePerMsg:   1024 * 1024,
 		MaxInflightMsgs: 256,
@@ -328,15 +334,20 @@ func (rc *raftNode) startRaft() {
 		MaxUncommittedEntriesSize: 1 << 30,
 	}
 
+	// 启动 Raft
+	//
+	// 存在 WAL 或者客户端要求 node 加入集群
 	if oldwal || rc.join {
 		rc.node = raft.RestartNode(c)
 	} else {
 		rc.node = raft.StartNode(c, rpeers)
 	}
 
+	// config raft communication module (RPC)
 	rc.transport = &rafthttp.Transport{
-		Logger:      rc.logger,
-		ID:          types.ID(rc.id),
+		Logger: rc.logger,
+		ID:     types.ID(rc.id),
+		// 16 进制的 4096
 		ClusterID:   0x1000,
 		Raft:        rc,
 		ServerStats: stats.NewServerStats("", ""),
@@ -344,7 +355,9 @@ func (rc *raftNode) startRaft() {
 		ErrorC:      make(chan error),
 	}
 
+	// start raft communication module
 	rc.transport.Start()
+	// 为 transport 模块添加其他 peer 的 addr
 	for i := range rc.peers {
 		if i+1 != rc.id {
 			rc.transport.AddPeer(types.ID(i+1), []string{rc.peers[i]})
@@ -431,6 +444,7 @@ func (rc *raftNode) maybeTriggerSnapshot(applyDoneC <-chan struct{}) {
 	rc.snapshotIndex = rc.appliedIndex
 }
 
+// TODO: 处理业务层发送给 proposeC 和 confChangeC 消息、将 Raft 的 Node 输出 Ready 结构进行相对应的处理即可。
 func (rc *raftNode) serveChannels() {
 	snap, err := rc.raftStorage.Snapshot()
 	if err != nil {
@@ -526,17 +540,21 @@ func (rc *raftNode) processMessages(ms []raftpb.Message) []raftpb.Message {
 }
 
 func (rc *raftNode) serveRaft() {
+	// 解析自己的 URL
 	url, err := url.Parse(rc.peers[rc.id-1])
 	if err != nil {
 		log.Fatalf("raftexample: Failed parsing URL (%v)", err)
 	}
 
+	// 开启监听
 	ln, err := newStoppableListener(url.Host, rc.httpstopc)
 	if err != nil {
 		log.Fatalf("raftexample: Failed to listen rafthttp (%v)", err)
 	}
 
+	// Handler() 返回一个 handler 来处理来自其他 peer 的 RPC requests
 	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)
+	// 阻塞，直到收到 httpstopc 信号关闭
 	select {
 	case <-rc.httpstopc:
 	default:
