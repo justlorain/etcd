@@ -41,6 +41,7 @@ func (ln stoppableListener) Accept() (c net.Conn, err error) {
 	connc := make(chan *net.TCPConn, 1)
 	errc := make(chan error, 1)
 	go func() {
+		// AcceptTCP() will block until a connection is made
 		tc, err := ln.AcceptTCP()
 		if err != nil {
 			errc <- err

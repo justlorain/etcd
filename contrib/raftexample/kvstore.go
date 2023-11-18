@@ -43,6 +43,7 @@ type kv struct {
 }
 
 func newKVStore(snapshotter *snap.Snapshotter, proposeC chan<- string, commitC <-chan *commit, errorC <-chan error) *kvstore {
+	// write-only channel
 	s := &kvstore{proposeC: proposeC, kvStore: make(map[string]string), snapshotter: snapshotter}
 	snapshot, err := s.loadSnapshot()
 	if err != nil {
@@ -80,6 +81,7 @@ func (s *kvstore) Propose(k string, v string) {
 func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 	// read-only channel
 	for commit := range commitC {
+		// 对应于 raftNode.publicSnapshot 的 rc.commitC <- nil
 		if commit == nil {
 			// signaled to load snapshot
 			snapshot, err := s.loadSnapshot()

@@ -110,6 +110,7 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 	// raft configuration
 	rc := &raftNode{
 		// 在 main.go 中创建
+		// read-only channel
 		proposeC:    proposeC,
 		confChangeC: confChangeC,
 		// 这里创建后返回
@@ -188,6 +189,7 @@ func (rc *raftNode) publishEntries(ents []raftpb.Entry) (<-chan struct{}, bool) 
 		case raftpb.EntryConfChange:
 			var cc raftpb.ConfChange
 			cc.Unmarshal(ents[i].Data)
+			// Raft 配置变化的两阶段提交的第二部分，第一部分是 ProposeConfChange
 			rc.confState = *rc.node.ApplyConfChange(cc)
 			switch cc.Type {
 			case raftpb.ConfChangeAddNode:
@@ -393,6 +395,7 @@ func (rc *raftNode) publishSnapshot(snapshotToSave raftpb.Snapshot) {
 	if snapshotToSave.Metadata.Index <= rc.appliedIndex {
 		log.Fatalf("snapshot index [%d] should > progress.appliedIndex [%d]", snapshotToSave.Metadata.Index, rc.appliedIndex)
 	}
+	// 发送加载快照的信号
 	rc.commitC <- nil // trigger kvstore to load snapshot
 
 	rc.confState = snapshotToSave.Metadata.ConfState
@@ -444,12 +447,15 @@ func (rc *raftNode) maybeTriggerSnapshot(applyDoneC <-chan struct{}) {
 	rc.snapshotIndex = rc.appliedIndex
 }
 
-// TODO: 处理业务层发送给 proposeC 和 confChangeC 消息、将 Raft 的 Node 输出 Ready 结构进行相对应的处理即可。
+// 处理业务层发送给 proposeC 和 confChangeC 消息
+// 处理 Ready 的输出
 func (rc *raftNode) serveChannels() {
+	// 获取最近的快照
 	snap, err := rc.raftStorage.Snapshot()
 	if err != nil {
 		panic(err)
 	}
+	// 根据快照重建配置
 	rc.confState = snap.Metadata.ConfState
 	rc.snapshotIndex = snap.Metadata.Index
 	rc.appliedIndex = snap.Metadata.Index
@@ -480,6 +486,7 @@ func (rc *raftNode) serveChannels() {
 				} else {
 					confChangeCount++
 					cc.ID = confChangeCount
+					// 提交配置变化提案
 					rc.node.ProposeConfChange(context.TODO(), cc)
 				}
 			}
@@ -499,15 +506,27 @@ func (rc *raftNode) serveChannels() {
 			// Must save the snapshot file and WAL snapshot entry before saving any other entries
 			// or hardstate to ensure that recovery after a snapshot restore is possible.
 			if !raft.IsEmptySnap(rd.Snapshot) {
+				// snapshotter 和 wal 保存快照
 				rc.saveSnap(rd.Snapshot)
 			}
+			// WAL 持久化保存 Raft log 以及 HardState, 也就是保存 persistent state on all servers
+			// NOTE: rd.Entries 和 rd.HardState 合起来就是论文中提到的 Persistent state on all servers
 			rc.wal.Save(rd.HardState, rd.Entries)
 			if !raft.IsEmptySnap(rd.Snapshot) {
+				// Storage 和 kvstore 不同，Storage 代表 Raft log 的存储，kvstore 代表状态机的存储
+				// 只有 Raft log 被 apply 后状态机才会进行保存
+				//
+				// 应用快照到 Storage (raft.MemoryStorage)
 				rc.raftStorage.ApplySnapshot(rd.Snapshot)
+				// 发送加载快照的信号, kvstore 会从快照中恢复状态机 (map[string]string)
 				rc.publishSnapshot(rd.Snapshot)
 			}
+			// 追加 Entries 到 Raft log
 			rc.raftStorage.Append(rd.Entries)
+			// 向其他 peers 发送 Raft RPC
+			// Raft 库会自动判断哪个 node 是 leader，然后才在返回的 Ready 中包括不同的消息类型 e.g. 心跳包等
 			rc.transport.Send(rc.processMessages(rd.Messages))
+			// 提交 committed entries 到状态机
 			applyDoneC, ok := rc.publishEntries(rc.entriesToApply(rd.CommittedEntries))
 			if !ok {
 				rc.stop()
@@ -546,24 +565,33 @@ func (rc *raftNode) serveRaft() {
 		log.Fatalf("raftexample: Failed parsing URL (%v)", err)
 	}
 
-	// 开启监听
+	// 开启监听, 用于接收来自其他 peer 的 RPC requests
 	ln, err := newStoppableListener(url.Host, rc.httpstopc)
 	if err != nil {
 		log.Fatalf("raftexample: Failed to listen rafthttp (%v)", err)
 	}
 
 	// Handler() 返回一个 handler 来处理来自其他 peer 的 RPC requests
+	// The Serve method of the http.Server struct starts the HTTP server
+	// and blocks while the server is running
 	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)
-	// 阻塞，直到收到 httpstopc 信号关闭
+	// The Serve method returns an error when the server stops.
+	// If the server was stopped intentionally (by closing the rc.httpstopc channel), the error is ignored.
+	// Otherwise, the error is logged and the program is terminated with log.Fatalf.
 	select {
+	// 接收 close(rc.httpstopc) 信号
 	case <-rc.httpstopc:
 	default:
 		log.Fatalf("raftexample: Failed to serve rafthttp (%v)", err)
 	}
+	// 发送结束 HTTP 服务信号
 	close(rc.httpdonec)
 }
 
+// Process 这里的 Process 为 Raft peers 处理 RPC 的逻辑
+// 调用 Step 就是将具体的 RPC 处理逻辑交给 Raft 库处理，用户只需要实现通信的逻辑（例如在这里通信逻辑由 rafthttp.Transport 负责）
 func (rc *raftNode) Process(ctx context.Context, m raftpb.Message) error {
+	// TODO: raftNode 实现了 rafthttp.Raft，这里的 Step 的作用是什么？Process 什么时候被调用？
 	return rc.node.Step(ctx, m)
 }
 func (rc *raftNode) IsIDRemoved(_ uint64) bool   { return false }
