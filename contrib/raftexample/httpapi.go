@@ -49,6 +49,7 @@ func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// committed so a subsequent GET on the key may return old value
 		w.WriteHeader(http.StatusNoContent)
 	// get stored value
+	// 这里为串行读
 	case http.MethodGet:
 		if v, ok := h.store.Lookup(key); ok {
 			w.Write([]byte(v))
@@ -123,6 +124,7 @@ func serveHTTPKVAPI(kv *kvstore, port int, confChangeC chan<- raftpb.ConfChange,
 	}()
 
 	// exit when raft goes down
+	// 阻塞在这里
 	if err, ok := <-errorC; ok {
 		log.Fatal(err)
 	}

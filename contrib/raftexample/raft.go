@@ -589,9 +589,10 @@ func (rc *raftNode) serveRaft() {
 }
 
 // Process 这里的 Process 为 Raft peers 处理 RPC 的逻辑
+// raftNode 被传入 rafthttp.Transport，所以这里的 Process 方法会被调用
 // 调用 Step 就是将具体的 RPC 处理逻辑交给 Raft 库处理，用户只需要实现通信的逻辑（例如在这里通信逻辑由 rafthttp.Transport 负责）
 func (rc *raftNode) Process(ctx context.Context, m raftpb.Message) error {
-	// TODO: raftNode 实现了 rafthttp.Raft，这里的 Step 的作用是什么？Process 什么时候被调用？
+	// Step 将 RPC response 提交给 raft 库处理
 	return rc.node.Step(ctx, m)
 }
 func (rc *raftNode) IsIDRemoved(_ uint64) bool   { return false }
