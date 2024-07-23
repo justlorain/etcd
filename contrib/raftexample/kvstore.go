@@ -108,6 +108,7 @@ func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 			s.kvStore[dataKv.Key] = dataKv.Val
 			s.mu.Unlock()
 		}
+		// 发送信号
 		close(commit.applyDoneC)
 	}
 	if err, ok := <-errorC; ok {

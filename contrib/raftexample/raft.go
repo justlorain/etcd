@@ -146,12 +146,19 @@ func (rc *raftNode) saveSnap(snap raftpb.Snapshot) error {
 	// save the snapshot file before writing the snapshot to the wal.
 	// This makes it possible for the snapshot file to become orphaned, but prevents
 	// a WAL snapshot entry from having no corresponding snapshot file.
+	//
+	// 调用 snapshotter.SaveSnap 方法将快照数据保存到磁盘上的快照文件中。
+	// 这一步是为了确保在写入 WAL 之前，快照文件已经被安全地保存下来。
 	if err := rc.snapshotter.SaveSnap(snap); err != nil {
 		return err
 	}
+	// 保存快照到 WAL：通过调用 wal.SaveSnapshot 方法将快照元数据写入 WAL。
+	// 这一步是为了记录快照的存在，以便在重启或恢复时能够从快照中恢复状态。
 	if err := rc.wal.SaveSnapshot(walSnap); err != nil {
 		return err
 	}
+	// 释放旧的 WAL 文件：最后，调用 wal.ReleaseLockTo 方法释放所有早于快照索引的 WAL 文件的锁。
+	// 这意味着这些旧的 WAL 文件可以被删除，从而释放磁盘空间。
 	return rc.wal.ReleaseLockTo(snap.Metadata.Index)
 }
 
@@ -432,7 +439,9 @@ func (rc *raftNode) maybeTriggerSnapshot(applyDoneC <-chan struct{}) {
 		panic(err)
 	}
 
+	// keep some in memory log entries for slow followers.
 	compactIndex := uint64(1)
+	// snapshotCatchUpEntriesN 代表触发快照后保留的日志条目数量
 	if rc.appliedIndex > snapshotCatchUpEntriesN {
 		compactIndex = rc.appliedIndex - snapshotCatchUpEntriesN
 	}

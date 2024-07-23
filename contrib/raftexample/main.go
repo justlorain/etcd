@@ -40,6 +40,7 @@ func main() {
 
 	// raft provides a commit stream for the proposals from the http api
 	var kvs *kvstore
+	// 将当前的 kvstore 序列化为 JSON 后返回
 	getSnapshot := func() ([]byte, error) { return kvs.getSnapshot() }
 	// 1. 创建 raft 节点
 	// commitC 返回已经提交的日志条目
@@ -48,6 +49,8 @@ func main() {
 
 	// 2. 创建 KV 存储服务
 	// 业务逻辑所在的地方，应该与 Raft 模块分离，或者说解耦
+	//
+	// 阻塞直到 snapshotterReady 准备好 snapshotter
 	kvs = newKVStore(<-snapshotterReady, proposeC, commitC, errorC)
 
 	// the key-value http handler will propose updates to raft
