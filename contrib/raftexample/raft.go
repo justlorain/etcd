@@ -197,6 +197,7 @@ func (rc *raftNode) publishEntries(ents []raftpb.Entry) (<-chan struct{}, bool) 
 			var cc raftpb.ConfChange
 			cc.Unmarshal(ents[i].Data)
 			// Raft 配置变化的两阶段提交的第二部分，第一部分是 ProposeConfChange
+			fmt.Println("=====================apply")
 			rc.confState = *rc.node.ApplyConfChange(cc)
 			switch cc.Type {
 			case raftpb.ConfChangeAddNode:

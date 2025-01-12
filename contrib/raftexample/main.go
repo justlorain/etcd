@@ -22,12 +22,22 @@ import (
 )
 
 func main() {
+	// TODO: debug
 	cluster := flag.String("cluster", "http://127.0.0.1:9021", "comma separated cluster peers")
 	id := flag.Int("id", 1, "node ID")
 	// HTTP 服务器的 port 不是 raft kvstore 的 port
 	kvport := flag.Int("port", 9121, "key-value server port")
 	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
+
+	//idv := 1
+	//id := &idv
+	//clusterv := "http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379"
+	//cluster := &clusterv
+	//joinv := false
+	//join := &joinv
+	//kvportv := 12380
+	//kvport := &kvportv
 
 	// kvstore 写入数据
 	// raftnode 读取数据
