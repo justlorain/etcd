@@ -126,6 +126,7 @@ func main() {
 
 	if mode == 1 {
 		log.Printf("please manually revoke the lease using 'etcdctl lease revoke %x' or wait for it to expire, then start executing client 2 and hit any key...", version)
+		// client 1 pause here
 		reader := bufio.NewReader(os.Stdin)
 		_, _ = reader.ReadByte()
 		log.Print("resuming client 1")
