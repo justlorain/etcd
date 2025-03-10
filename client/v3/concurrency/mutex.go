@@ -79,6 +79,8 @@ func (m *Mutex) Lock(ctx context.Context) error {
 	}
 	// if no key on prefix / the minimum rev is key, already hold the lock
 	ownerKey := resp.Responses[1].GetResponseRange().Kvs
+	// 1. len(ownerKey) == 0: No keys exist with this prefix (we're the first)
+	// 2. ownerKey[0].CreateRevision == m.myRev: Our key has the lowest creation revision (we're first in line)
 	if len(ownerKey) == 0 || ownerKey[0].CreateRevision == m.myRev {
 		m.hdr = resp.Header
 		return nil
@@ -128,6 +130,13 @@ func (m *Mutex) tryAcquire(ctx context.Context) (*v3.TxnResponse, error) {
 		return nil, err
 	}
 	m.myRev = resp.Header.Revision
+	// resp.Responses[0] 和 resp.Responses[1]
+	// If Succeeded
+	// - resp.Responses[0] == put
+	// - resp.Responses[1] == getOwner
+	// If !Succeeded
+	// - resp.Responses[0] == get
+	// - resp.Responses[1] == getOwner
 	if !resp.Succeeded {
 		m.myRev = resp.Responses[0].GetResponseRange().Kvs[0].CreateRevision
 	}
