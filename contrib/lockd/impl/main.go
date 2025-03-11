@@ -30,14 +30,14 @@ func main() {
 		log.Fatalf("failed to reach etcd: %s", err)
 	}
 
-	session, err := concurrency.NewSession(cli, concurrency.WithTTL(1))
+	session, err := concurrency.NewSession(cli, concurrency.WithTTL(10))
 	if err != nil {
 		log.Fatalf("failed to create a session: %s", err)
 	}
 	go func() {
 		time.Sleep(time.Second * 10)
-		log.Println("Session closed")
-		session.Close()
+		log.Println("Session orphan")
+		session.Orphan()
 	}()
 
 	log.Print("created etcd client and session")
@@ -58,7 +58,7 @@ func main() {
 			locker.Unlock()
 			log.Println("Lock released")
 		case "expire", "e":
-			session.Close()
+			session.Orphan()
 			log.Println("Session closed")
 		case "quit", "q":
 			fmt.Println("Quit program")
