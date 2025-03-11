@@ -17,6 +17,7 @@ package concurrency
 import (
 	"context"
 	"errors"
+	"log"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	v3 "go.etcd.io/etcd/client/v3"
@@ -49,6 +50,7 @@ func waitDelete(ctx context.Context, client *v3.Client, key string, rev int64) e
 func waitDeletes(ctx context.Context, client *v3.Client, pfx string, maxCreateRev int64) error {
 	getOpts := append(v3.WithLastCreate(), v3.WithMaxCreateRev(maxCreateRev))
 	for {
+		log.Println("waitDeletes iter")
 		resp, err := client.Get(ctx, pfx, getOpts...)
 		if err != nil {
 			return err
@@ -57,6 +59,7 @@ func waitDeletes(ctx context.Context, client *v3.Client, pfx string, maxCreateRe
 			return nil
 		}
 		lastKey := string(resp.Kvs[0].Key)
+		log.Print("waitDeletes key: ", lastKey)
 		if err = waitDelete(ctx, client, lastKey, resp.Header.Revision); err != nil {
 			return err
 		}
