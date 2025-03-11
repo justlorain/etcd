@@ -87,7 +87,8 @@ func (m *Mutex) Lock(ctx context.Context) error {
 	}
 	client := m.s.Client()
 	// wait for deletion revisions prior to myKey
-	werr := waitDeletes(ctx, client, m.pfx, m.myKey, m.myRev-1)
+	// TODO: early termination if the session key is deleted before other session keys with smaller revisions.
+	werr := waitDeletes(ctx, client, m.pfx, m.myRev-1)
 	// release lock key if wait failed
 	if werr != nil {
 		m.Unlock(client.Ctx())
@@ -114,17 +115,13 @@ func (m *Mutex) tryAcquire(ctx context.Context) (*v3.TxnResponse, error) {
 	client := m.s.Client()
 
 	m.myKey = fmt.Sprintf("%s%x", m.pfx, s.Lease())
-	// 通过判断这个 key 的 Revision 是否为 0 来判断这个 key 是否存在
-	// create revision 是基于 raft log index 实现的
 	cmp := v3.Compare(v3.CreateRevision(m.myKey), "=", 0)
 	// put self in lock waiters via myKey; oldest waiter holds lock
 	put := v3.OpPut(m.myKey, "", v3.WithLease(s.Lease()))
 	// reuse key in case this session already holds the lock
 	get := v3.OpGet(m.myKey)
 	// fetch current holder to complete uncontended path with only one RPC
-	// 获取当前 pfx 代表的 Locker 实例的队列最早的键值对
 	getOwner := v3.OpGet(m.pfx, v3.WithFirstCreate()...)
-	// 键不存在 => Then，键存在 => Else
 	resp, err := client.Txn(ctx).If(cmp).Then(put, getOwner).Else(get, getOwner).Commit()
 	if err != nil {
 		return nil, err
@@ -170,9 +167,6 @@ func (m *Mutex) Key() string { return m.myKey }
 // Header is the response header received from etcd on acquiring the lock.
 func (m *Mutex) Header() *pb.ResponseHeader { return m.hdr }
 
-var _ sync.Locker = (*lockerMutex)(nil)
-
-// 用于实现标准库的 sync.Locker 接口
 type lockerMutex struct{ *Mutex }
 
 func (lm *lockerMutex) Lock() {
