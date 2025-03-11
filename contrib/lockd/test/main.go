@@ -41,7 +41,7 @@ func main() {
 
 	locker := concurrency.NewLocker(session, "/lock")
 
-	fmt.Println("Enter commands (lock/unlock/exit):")
+	fmt.Println("Enter commands")
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for scanner.Scan() {
@@ -54,11 +54,14 @@ func main() {
 		case "unlock", "u":
 			locker.Unlock()
 			log.Println("Lock released")
-		case "exit", "q":
-			fmt.Println("Exiting...")
+		case "expire", "e":
+			session.Close()
+			log.Println("Session closed")
+		case "quit", "q":
+			fmt.Println("Quit program")
 			return
 		default:
-			fmt.Println("Unknown command. Please use 'lock', 'unlock', or 'exit'")
+			fmt.Println("Unknown command.")
 		}
 	}
 
