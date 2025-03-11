@@ -30,12 +30,12 @@ func main() {
 		log.Fatalf("failed to reach etcd: %s", err)
 	}
 
-	session, err := concurrency.NewSession(cli, concurrency.WithTTL(10))
+	session, err := concurrency.NewSession(cli, concurrency.WithTTL(1))
 	if err != nil {
 		log.Fatalf("failed to create a session: %s", err)
 	}
 	go func() {
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * 5)
 		log.Println("Session orphan")
 		session.Orphan()
 	}()
