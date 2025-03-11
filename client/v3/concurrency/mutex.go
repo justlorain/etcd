@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -77,6 +78,7 @@ func (m *Mutex) Lock(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	log.Print("lock key", m.myKey)
 	// if no key on prefix / the minimum rev is key, already hold the lock
 	ownerKey := resp.Responses[1].GetResponseRange().Kvs
 	// 1. len(ownerKey) == 0: No keys exist with this prefix (we're the first)
