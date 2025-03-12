@@ -89,7 +89,6 @@ func (m *Mutex) Lock(ctx context.Context) error {
 	}
 	client := m.s.Client()
 	// wait for deletion revisions prior to myKey
-	// TODO: early termination if the session key is deleted before other session keys with smaller revisions.
 	werr := waitDeletes(ctx, client, m.pfx, m.myKey, m.myRev-1)
 	// release lock key if wait failed
 	if werr != nil {

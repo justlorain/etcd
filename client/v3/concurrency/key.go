@@ -32,11 +32,9 @@ func waitDelete(ctx context.Context, client *v3.Client, key, sessionKey string, 
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// TODO: 可以传递两个 cctx 吗，写一个简单的 demo 测试
 	wch := client.Watch(cctx, key, v3.WithRev(rev))
 	sch := client.Watch(cctx, sessionKey)
 
-	// TODO: check
 	for {
 		select {
 		case wr, ok := <-wch:
